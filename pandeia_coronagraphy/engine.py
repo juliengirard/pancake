@@ -156,7 +156,7 @@ def get_psf( wave, instrument, aperture_name, source_offset=(0, 0), otf_options=
         # get_psf but is stored in the full aperture name in self._psfs
         if aperture_name in ['masklwb', 'maskswb']:
             # Everything after the aperture name is the filter name.
-            #full_aperture = self._psfs[0]['aperture_name']
+            full_aperture = self._psfs[0]['aperture_name']
             fname = full_aperture[full_aperture.find(aperture_name) + len(aperture_name):]
             ins.filter = fname
         if wave > 2.5:
