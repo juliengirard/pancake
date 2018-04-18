@@ -89,8 +89,13 @@ def perform_calculation(calcfile):
     '''
     if options.on_the_fly_PSFs:
         pandeia.engine.psf_library.PSFLibrary.get_psf = get_psf_cache_wrapper
+        if options.verbose:
+            print("Running calculation using On-the-Fly PSF calculation")
     else:
         pandeia.engine.psf_library.PSFLibrary.get_psf = pandeia_get_psf
+        if options.verbose:
+            print("Running calculation using default library PSFs")
+
     if options.pandeia_fixed_seed:
         pandeia.engine.observation.Observation.get_random_seed = pandeia_seed
     else:
@@ -104,6 +109,8 @@ def perform_calculation(calcfile):
     if options.on_the_fly_PSFs:
         # Append PSF that was computed on-the-fly
         results['psf'] = latest_on_the_fly_PSF
+        if options.verbose:
+            print("Added PSF to results dict.")
 
     #get fullwell for instrument + detector combo
     #instrument = InstrumentFactory(config=calcfile['configuration'])
@@ -169,6 +176,7 @@ def get_psf( wave, instrument, aperture_name, source_offset=(0, 0), otf_options=
     ins.image_mask = image_mask
     ins.pupil_mask = pupil_mask
 
+
     # Apply any extra options if specified by the user:
     for key in options.on_the_fly_webbpsf_options:
         ins.options[key] = options.on_the_fly_webbpsf_options[key]
@@ -188,7 +196,9 @@ def get_psf( wave, instrument, aperture_name, source_offset=(0, 0), otf_options=
     ins.options['parity'] = 'odd'
     ins.pixelscale = pix_scl   # ensure precise agreement w/ what Pandeia expects
 
-    psf_result = calc_psf_and_center(ins, wave, source_offset[0], source_offset[1], 3,
+    oversample = 5 if instrument.upper() == 'NIRSPEC' else 3
+
+    psf_result = calc_psf_and_center(ins, wave, source_offset[0], source_offset[1], oversample,
                             pix_scl, fov_pixels, trim_fov_pixels=trim_fov_pixels)
 
     pix_scl = psf_result[0].header['PIXELSCL']
@@ -216,25 +226,26 @@ def parse_aperture(aperture_name, instrument_name):
     '''
 
     aperture_keys = ['mask210r','mask335r','mask430r','masklwb','maskswb', 'sw','lw',
-                     'fqpm1065','fqpm1140','fqpm1550','lyot2300','imager']
+                     'fqpm1065','fqpm1140','fqpm1550','lyot2300','imager',
+                     'shutter', 's1600a1']
     assert aperture_name in aperture_keys, \
         'Aperture {} not recognized! Must be one of {}'.format(aperture_name, aperture_keys)
 
 
     if instrument_name =='NIRCAM':
         nc = webbpsf.NIRCam()
-        aperture_dict = {
+        aperture_dict = { # WebbPSF image_mask, pupil_mask, fov_pixels, trim_fov_pixels, pixelscale
             'mask210r' : ['MASK210R','CIRCLYOT', 101, None, nc._pixelscale_short],
             'mask335r' : ['MASK335R','CIRCLYOT', 101, None, nc._pixelscale_long],
             'mask430r' : ['MASK430R','CIRCLYOT', 101, None, nc._pixelscale_long],
             'masklwb' : ['MASKLWB','WEDGELYOT', 351, 101, nc._pixelscale_long],
             'maskswb' : ['MASKSWB','WEDGELYOT', 351, 101, nc._pixelscale_short],
-            'sw': [None, None, 101, None, nc._pixelscale_short],
+            'sw': [None, None, 155, None, nc._pixelscale_short],
             'lw': [None, None, 101, None, nc._pixelscale_short],
             }
     elif instrument_name=='MIRI':
         miri = webbpsf.MIRI()
-        aperture_dict = {
+        aperture_dict = { # WebbPSF image_mask, pupil_mask, fov_pixels, trim_fov_pixels, pixelscale
             'fqpm1065' : ['FQPM1065','MASKFQPM', 81, None, miri.pixelscale],
             'fqpm1140' : ['FQPM1140','MASKFQPM', 81, None, miri.pixelscale],
             'fqpm1550' : ['FQPM1550','MASKFQPM', 81, None, miri.pixelscale],
@@ -243,11 +254,19 @@ def parse_aperture(aperture_name, instrument_name):
                                                      # exactly or we trigger an error in engine.astro_spectrum.AdvancedPSF
                                                      # I dunno why this is the case for MIRI imaging but not coronagraphy. ??
             }
-    elif instrument_name =='NIRISS' or instrument_name=='NIRSPEC' or instrument_name=='FGS':
+    elif instrument_name =='NIRISS'  or instrument_name=='FGS':
         desired_psf_size ={'NIRISS':81, 'NIRSPEC':41, "FGS":81}
         inst = webbpsf.Instrument(instrument_name)
-        aperture_dict = {
+        aperture_dict = { # WebbPSF image_mask, pupil_mask, fov_pixels, trim_fov_pixels, pixelscale
             'imager': [None, None, desired_psf_size[instrument_name], None, inst.pixelscale],
+            }
+    elif instrument_name=='NIRSPEC':
+        ns = webbpsf.NIRSpec()
+        ns.pixelscale = 0.106 # TODO determine why Pandeia wants .106 instead of .1043. But for now just adapt to match!.
+                              # TODO we could read this from the [aperturename]['pix'] values in the config JSON for NIRSpec
+        aperture_dict = { # WebbPSF image_mask, pupil_mask, fov_pixels, trim_fov_pixels, pixelscale
+            'shutter': ['MSA all open', 'NIRSpec grating', 41, None, ns.pixelscale],
+            's1600a1': ['S1600A1', 'NIRSpec grating', 41, None, ns.pixelscale],
             }
     else:
         raise NotImplementedError("Instrument {} is not yet supported for on-the-fly PSFs; need to update engine.py".format(instrument_name))
